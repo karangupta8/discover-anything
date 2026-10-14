@@ -62,6 +62,19 @@ def verify(root: Path) -> tuple[PreregCheck, ...]:
     return tuple(checks)
 
 
+def _verified_files(root: Path, manifest: dict[str, Any]) -> list[Path]:
+    """Frozen files, each confirmed inside the hunt folder and unchanged."""
+    files = []
+    for item in manifest["files"]:
+        full = (root / item["path"]).resolve()
+        if root.resolve() not in full.parents:
+            raise ValueError(f"manifest path {item['path']} is outside the hunt folder")
+        if not full.is_file() or file_sha256(full) != item["sha256"]:
+            raise ValueError(f"{item['path']} is missing or changed since it was frozen")
+        files.append(full)
+    return files
+
+
 def zenodo_draft(root: Path, manifest_path: Path, *, title: str, creators: list[str],
                  token: str, description: str = "", sandbox: bool = False,
                  http: HttpClient | None = None) -> dict[str, Any]:
@@ -80,9 +93,12 @@ def zenodo_draft(root: Path, manifest_path: Path, *, title: str, creators: list[
         "creators": [{"name": name} for name in creators],
         "prereserve_doi": True,
     }}
+    uploads = [Path(manifest_path)] + _verified_files(Path(root), manifest)
     created = http.post_json(f"{api}/deposit/depositions", metadata, headers=auth)
     bucket = created["links"]["bucket"]
-    for path in [Path(manifest_path), *[Path(root) / f["path"] for f in manifest["files"]]]:
+    if not str(bucket).startswith(api.rsplit("/api", 1)[0] + "/"):
+        raise RuntimeError(f"unexpected upload location {bucket}; not uploading")
+    for path in uploads:
         http.put_bytes(f"{bucket}/{path.name}", path.read_bytes(), headers=auth)
     doi = created.get("metadata", {}).get("prereserve_doi", {}).get("doi")
     return {"id": created["id"], "reserved_doi": doi, "edit_url": created["links"].get("html"),

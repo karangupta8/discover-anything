@@ -26,7 +26,9 @@ data/
 .env
 keys.yml
 """
-_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?<!\.)$")
+WINDOWS_RESERVED = frozenset({"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
+                              *(f"lpt{i}" for i in range(1, 10))})
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ def _fill_kickoff(text: str, name: str, question: str | None, domain: str) -> st
         "- **Date:**", f"- **Date:** {date.today().isoformat()}", 1
     )
     if question:
+        question = " ".join(question.split())  # one line: can't spill into other fields
         filled = filled.replace(
             "- **Question in one sentence:**", f"- **Question in one sentence:** {question}", 1
         )
@@ -49,7 +52,7 @@ def _fill_kickoff(text: str, name: str, question: str | None, domain: str) -> st
 def create_hunt(path: Path, *, question: str | None = None, domain: str = "other") -> CreatedHunt:
     """Scaffold a hunt folder. Refuses to touch an existing non-empty folder."""
     root = Path(path)
-    if not _NAME_RE.match(root.name):
+    if not _NAME_RE.match(root.name) or root.name.split(".")[0].lower() in WINDOWS_RESERVED:
         raise ValueError("hunt name must start with a letter or digit and use only "
                          "letters, digits, '.', '_' or '-'")
     if domain not in DOMAINS:

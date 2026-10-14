@@ -16,7 +16,7 @@ from .ledger import Entry, check_file, find
 
 CITATION_RE = re.compile(r"\[(E-\d+(?:\s*,\s*E-\d+)*)\]", re.IGNORECASE)
 _STRIP_PATTERNS = (
-    re.compile(r"`[^`]*`"),                    # inline code
+    re.compile(r"`[^`]*[A-Za-z_/\\][^`]*`"),     # inline code naming files or identifiers
     re.compile(r"\]\([^)]*\)"),                # link targets
     re.compile(r"https?://\S+"),               # bare URLs
     re.compile(r"<!--.*?-->"),                 # html comments
@@ -24,6 +24,10 @@ _STRIP_PATTERNS = (
 )
 _LIST_MARKER = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{3,}")
+_FENCE = re.compile(r"^\s*(```|~~~)")
+_HEADING_OR_QUOTE = re.compile(r"^\s*(?:#{1,6}|>+)\s*")
+CITABLE_KINDS = ("evidence", "novelty", "prereg", "funnel")
+UNCLOSED_FENCE = "unclosed code fence: everything after it was skipped"
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(\"'])")
 
 
@@ -57,7 +61,8 @@ def _units(markdown: str) -> list[Unit]:
     units: list[Unit] = []
     buffer: list[str] = []
     start = 0
-    in_code = False
+    fence: str | None = None
+    fence_line = 0
 
     def flush() -> None:
         nonlocal buffer
@@ -68,15 +73,22 @@ def _units(markdown: str) -> list[Unit]:
 
     for number, raw in enumerate(lines, start=1):
         line = raw.rstrip()
-        if line.lstrip().startswith("```"):
+        marker = _FENCE.match(line)
+        if marker and (fence is None or marker.group(1) == fence):
             flush()
-            in_code = not in_code
+            fence, fence_line = (None, 0) if fence else (marker.group(1), number)
             continue
-        if in_code:
+        if fence:
             continue
         stripped = line.strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith(">"):
+        if not stripped:
             flush()
+            continue
+        if _HEADING_OR_QUOTE.match(stripped):
+            flush()
+            text = _HEADING_OR_QUOTE.sub("", stripped)
+            if text:
+                units.append(Unit(number, text))
             continue
         if stripped.startswith("|"):
             flush()
@@ -93,6 +105,8 @@ def _units(markdown: str) -> list[Unit]:
             start = number
         buffer.append(stripped)
     flush()
+    if fence:
+        units.append(Unit(fence_line, UNCLOSED_FENCE))
     return units
 
 
@@ -107,11 +121,18 @@ def check_text(markdown: str, entries: tuple[Entry, ...], root: Path | None = No
     issues: list[ClaimIssue] = []
     with_numbers = cited = 0
     for unit in _units(markdown):
+        if unit.text == UNCLOSED_FENCE:
+            issues.append(ClaimIssue(unit.line, unit.text, UNCLOSED_FENCE))
+            continue
         citations = [c.strip() for m in CITATION_RE.finditer(unit.text) for c in m.group(1).split(",")]
         for cid in citations:
             entry = find(entries, cid)
             if entry is None:
                 issues.append(ClaimIssue(unit.line, unit.text, f"cites {cid}, which is not in the ledger"))
+                continue
+            if entry.kind not in CITABLE_KINDS:
+                issues.append(ClaimIssue(unit.line, unit.text,
+                                         f"cites {cid}, a {entry.kind} entry, not evidence"))
                 continue
             check = check_file(root, entry) if root is not None else None
             if check is not None and check.status != "ok":

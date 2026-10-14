@@ -32,8 +32,10 @@ by hobbyists days earlier. This skill makes the check systematic and dated.
    the star itself appearing in SIMBAD is expected. What matters is whether the
    *signal or event* is recorded (a TOI or CTOI, a VSX entry with a matching
    period, a paper discussing the same signal, an eruption with the same date).
-4. **Finish the `not-checked` and `manual` rows by hand** and add the result
-   to the log. They are listed under "Not yet checked".
+4. **Finish the `not-checked` and `manual` rows** (set `ADS_API_TOKEN`, rerun, or check by hand) and add the result
+   to the log. They are listed under "Not yet checked". `discover status` keeps the
+   Novelty gate failing until they are done or the human runs
+   `discover waive novelty-incomplete --note "<what was checked by hand>"`.
 5. **Check what the tool can't:** social posts and forums by every alias (last
    month), and the domain pack's list of recent catalogues.
 6. **Write the conclusion** in the log in the charter's language: "no prior

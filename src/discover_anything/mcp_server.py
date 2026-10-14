@@ -33,6 +33,14 @@ def _root(hunt: str) -> Path:
     return find_hunt_root(Path(hunt))
 
 
+def _inside(root: Path, file: str) -> Path:
+    """Resolve a file argument and refuse anything outside the hunt folder."""
+    full = (Path(file) if Path(file).is_absolute() else root / file).resolve()
+    if root.resolve() not in full.parents:
+        raise ValueError(f"{file} is outside the hunt folder")
+    return full
+
+
 @server.tool()
 def new_hunt(path: str, question: str = "", domain: str = "other") -> dict[str, Any]:
     """Create a hunt folder (KICKOFF, HANDOFF, RUNLOG, LESSONS, ledger and working folders).
@@ -81,8 +89,7 @@ def verify_evidence(hunt: str) -> list[dict[str, Any]]:
 def check_claims(hunt: str, file: str) -> dict[str, Any]:
     """Find statements with numbers that cite no evidence ID, or cite changed files."""
     root = _root(hunt)
-    full = Path(file) if Path(file).is_absolute() else root / file
-    return asdict(claims.check_file_claims(full, ledger.read_entries(root), root))
+    return asdict(claims.check_file_claims(_inside(root, file), ledger.read_entries(root), root))
 
 
 @server.tool()

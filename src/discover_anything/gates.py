@@ -13,13 +13,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import funnel
-from .ledger import Entry, check_file, file_sha256, read_entries, verify, with_tag
+from .ledger import Entry, chain_problems, check_file, file_sha256, read_entries, verify, with_tag
 from .review_text import is_response_filled, is_review_filled
 
 PASS, FAIL, WAIVED, ATTESTED = "pass", "fail", "waived", "attested"
 CLAIM_STATUSES = ("candidate", "rejected", "already known", "confirmed", "submitted")
 LIVE_STATUSES = ("candidate", "confirmed", "submitted")
-WAIVABLE = ("injection", "null-funnel", "prereg", "followup")
+WAIVABLE = ("injection", "null-funnel", "funnel-warnings", "novelty-incomplete", "prereg", "followup")
+PLACEHOLDERS = frozenset({"tbd", "todo", "none", "n/a", "na", "xxx", "lorem", "ipsum", "tba",
+                          "placeholder", "fill", "later", "unknown", "?"})
+MIN_FIELD_WORDS = 2
+EVIDENCE_KINDS = ("evidence", "novelty", "prereg", "funnel")
 ATTESTABLE = ("expert-review", "followup")
 
 
@@ -45,6 +49,10 @@ class HuntStatus:
     def current(self) -> GateResult | None:
         return next((g for g in self.gates if not g.done), None)
 
+    @property
+    def all_passed(self) -> bool:
+        return self.current is None and not self.integrity
+
 
 # --- helpers -----------------------------------------------------------------
 
@@ -65,12 +73,29 @@ def field_value(markdown: str, label: str) -> str:
 
 
 def is_filled(value: str) -> bool:
-    cleaned = re.sub(r"<[^>]*>", "", value)
-    return len(re.findall(r"[A-Za-z0-9]", cleaned)) >= 3
+    """At least two real words, not a placeholder like TBD or <one sentence>."""
+    cleaned = re.sub(r"<[^>]*>", " ", value)
+    words = [w for w in re.findall(r"[A-Za-z0-9][A-Za-z0-9'./%-]*", cleaned)
+             if w.lower().strip(".") not in PLACEHOLDERS]
+    return len(words) >= MIN_FIELD_WORDS and len(re.findall(r"[A-Za-z0-9]", " ".join(words))) >= 3
 
 
 def _missing_fields(kickoff: str, labels: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(label for label in labels if not is_filled(field_value(kickoff, label)))
+
+
+def _intact(root: Path, entries: tuple[Entry, ...]) -> tuple[tuple[Entry, ...], list[str]]:
+    """Entries whose files exist, are non-empty and unchanged; plus problems for the rest."""
+    good, problems = [], []
+    for entry in entries:
+        check = check_file(root, entry)
+        if check is not None and check.status != "ok":
+            problems.append(f"{entry.id} {entry.path} is {check.status} since it was recorded")
+        elif entry.path is not None and not entry.bytes:
+            problems.append(f"{entry.id} {entry.path} is empty")
+        else:
+            good.append(entry)
+    return tuple(good), problems
 
 
 def _flag(entries: tuple[Entry, ...], kind: str, check: str) -> Entry | None:
@@ -112,12 +137,14 @@ def _calibrate(root: Path, entries: tuple[Entry, ...]) -> GateResult:
         "null": "run the pipeline on inverted or shuffled data, then `discover record <file> --tag null`",
     }
     for tag in ("known-answer", "null"):
-        found = with_tag(entries, tag)
+        found, bad = _intact(root, with_tag(entries, tag))
+        problems.extend(bad)
         if found:
             details.append(f"{len(found)} evidence entries tagged '{tag}'")
         else:
             problems.append(f"no '{tag}' evidence: {how[tag]}")
-    injection = with_tag(entries, "injection")
+    injection, bad = _intact(root, with_tag(entries, "injection"))
+    problems.extend(bad)
     injection_waiver = _flag(entries, "waiver", "injection")
     if injection:
         details.append(f"{len(injection)} evidence entries tagged 'injection'")
@@ -149,16 +176,24 @@ def _calibrate(root: Path, entries: tuple[Entry, ...]) -> GateResult:
     return GateResult(3, "Calibrate", PASS, tuple(details))
 
 
-def _search(entries: tuple[Entry, ...]) -> GateResult:
+def _search(root: Path, entries: tuple[Entry, ...]) -> GateResult:
     table = funnel.stages(entries)
     problems: list[str] = []
-    if not with_tag(entries, "search"):
-        problems.append("no evidence tagged 'search'")
+    search, bad = _intact(root, with_tag(entries, "search"))
+    problems.extend(bad)
+    if not search:
+        problems.append("no 'search' evidence: `discover record <results file> --tag search`")
     if len(table) < 2:
         problems.append(f"{len(table)} funnel stage(s) recorded; need at least 2")
     if table and all(s.null is None for s in table) and not _flag(entries, "waiver", "null-funnel"):
         problems.append("funnel has no null-run counts")
-    details = [f"{len(table)} funnel stages", *funnel.warnings(table)]
+    warnings = list(funnel.warnings(table))
+    waiver = _flag(entries, "waiver", "funnel-warnings")
+    if warnings and not waiver:
+        problems.extend(f"funnel: {w}" for w in warnings)
+    details = [f"{len(table)} funnel stages"]
+    if warnings and waiver:
+        details.append(f"funnel warnings waived: {waiver.note}")
     if problems:
         return GateResult(4, "Search", FAIL, tuple(problems + details), problems[0])
     return GateResult(4, "Search", PASS, tuple(details))
@@ -192,22 +227,44 @@ def _kill(root: Path) -> GateResult:
     return GateResult(5, "Kill", PASS, details)
 
 
+def _novelty_ok(root: Path, entries: tuple[Entry, ...], cid: str) -> str | None:
+    """None if the claim has an adequate, intact novelty log; else the problem."""
+    logs = [e for e in entries if e.kind == "novelty" and e.data.get("claim") == cid]
+    manual = [e for e in with_tag(entries, "novelty")
+              if e.path and Path(e.path).name.startswith(f"{cid}_")]
+    if not logs and not manual:
+        return f"no novelty log for {cid}"
+    if manual and not logs:
+        intact, bad = _intact(root, tuple(manual[-1:]))
+        return bad[0] if bad else None
+    latest = logs[-1]
+    intact, bad = _intact(root, (latest,))
+    if bad:
+        return bad[0]
+    if latest.data.get("catalogues_checked", 0) < 1:
+        return f"{cid}: the novelty log checked no catalogue (only literature, n/a or failed sources)"
+    pending = latest.data.get("pending", [])
+    if pending and not _flag(entries, "waiver", "novelty-incomplete"):
+        return (f"{cid}: not checked yet: {', '.join(pending)} (rerun, or check by hand and record "
+                "the log with `--tag novelty`)")
+    return None
+
+
 def _novelty(root: Path, entries: tuple[Entry, ...]) -> GateResult:
     claims = _claims(root)
+    if not claims:
+        return GateResult(6, "Novelty", FAIL, ("no claims",), "Write claim cards first")
+    if any(status is None for status in claims.values()):
+        return GateResult(6, "Novelty", FAIL, ("some claim cards have no status",),
+                          "Set a status on every claim card")
     live = [cid for cid, status in claims.items() if status in LIVE_STATUSES]
-    if claims and not live:
+    if not live:
         return GateResult(6, "Novelty", PASS, ("no live candidates: every claim was rejected or "
                                               "already known (stopping is a result)",))
-    logged = {e.data.get("claim") for e in entries if e.kind == "novelty"}
-    folder = root / "novelty"
-    missing = [cid for cid in live
-               if cid not in logged and not (folder.is_dir() and any(folder.glob(f"{cid}_*.md")))]
-    if not claims or missing:
-        action = (f"Run `discover novelty run --claim {missing[0]} ...`" if missing
-                  else "Write claim cards first")
-        return GateResult(6, "Novelty", FAIL,
-                          tuple(f"no novelty log for {cid}" for cid in missing) or ("no claims",),
-                          action)
+    problems = [p for p in (_novelty_ok(root, entries, cid) for cid in live) if p]
+    if problems:
+        return GateResult(6, "Novelty", FAIL, tuple(problems),
+                          f"Run `discover novelty run --claim <id> ...`: {problems[0]}")
     return GateResult(6, "Novelty", PASS, (f"novelty logs for {len(live)} live claim(s)",))
 
 
@@ -260,7 +317,7 @@ def evaluate(root: Path) -> HuntStatus:
             "What counts as a candidate", "What kills a candidate", "What result stops the project",
         )),
         _calibrate(root, entries),
-        _search(entries),
+        _search(root, entries),
         _kill(root),
         _novelty(root, entries),
         _prereg(root, entries),
@@ -270,7 +327,7 @@ def evaluate(root: Path) -> HuntStatus:
                   "After the preregistered test: `discover attest followup --note <outcome>`"),
     )
     integrity = tuple(f"{c.entry_id} {c.path}: {c.status}" for c in verify(root, entries)
-                      if c.status != "ok")
+                      if c.status != "ok") + tuple(chain_problems(root))
     return HuntStatus(gates, integrity)
 
 
@@ -285,5 +342,10 @@ def render(status: HuntStatus) -> str:
         lines.extend(f"  {item}" for item in status.integrity)
     current = status.current
     lines.append("")
-    lines.append(f"Next: {current.next_action}" if current else "All gates passed.")
+    if current:
+        lines.append(f"Next: {current.next_action}")
+    elif status.integrity:
+        lines.append("Next: every gate passes, but recorded evidence changed; fix it before reporting.")
+    else:
+        lines.append("All gates passed.")
     return "\n".join(lines)

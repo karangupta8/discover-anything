@@ -99,8 +99,10 @@ def test_search_needs_evidence_and_funnel_with_null(filled_hunt):
 
 def _kill(root: Path, status: str = "candidate") -> None:
     write(root, "claims/TIC-1.md", f"# Claim: TIC-1\n\n**Status:** {status}\n")
-    write(root, "reviews/REVIEW_codex_2026-10-14.md", "# Review\n\n" + "Real finding about odd/even. " * 5)
-    write(root, "reviews/RESPONSE_codex_2026-10-14.md", "| # | Finding |\n|---|---|\n| 1 | fixed |\n")
+    write(root, "reviews/REVIEW_codex_2026-10-14.md",
+          "# Review\n\n" + "The odd and even depths differ by more than two sigma in sector 90. " * 4)
+    write(root, "reviews/RESPONSE_codex_2026-10-14.md",
+          "| # | Finding | Fixed / disputed |\n|---|---|---|\n| 1 | odd/even depth | fixed in fit v2 |\n")
 
 
 def test_kill_rejects_template_status_and_stub_reviews(filled_hunt):
@@ -119,7 +121,9 @@ def test_full_walk_to_all_gates_passed(filled_hunt):
     _kill(filled_hunt)
     assert status_of(filled_hunt)["Kill"] == "pass"
     assert status_of(filled_hunt)["Novelty"] == "fail"
-    write(filled_hunt, "novelty/TIC-1_2026-10-14.md", "# Novelty Log")
+    log = write(filled_hunt, "novelty/TIC-1_2026-10-14.md", "# Novelty Log")
+    ledger.append(filled_hunt, "novelty", path=log, data={"claim": "TIC-1", "catalogues_checked": 6,
+                                                          "pending": []})
     assert status_of(filled_hunt)["Novelty"] == "pass"
     predictions = write(filled_hunt, "prereg/predictions.csv", "t,err\n3100.5,0.01\n")
     prereg.freeze(filled_hunt, [predictions], "before Sector 110")

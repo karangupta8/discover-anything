@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass
 
 from ..http import HttpClient
-from .base import Match, Target, adql_string, tic_numbers
+from .base import Match, Target, adql_string, require, tic_numbers
 
 SIMBAD_TAP = "https://simbad.cds.unistra.fr/simbad/sim-tap/sync"
 VIZIER_ASU = "https://vizier.cds.unistra.fr/viz-bin/asu-tsv"
@@ -26,7 +26,7 @@ def _cone_deg(target: Target) -> float:
 def _simbad(http: HttpClient, adql: str) -> list[list]:
     data = http.get_json(SIMBAD_TAP, {"REQUEST": "doQuery", "LANG": "ADQL",
                                       "FORMAT": "json", "QUERY": adql})
-    return data.get("data", [])
+    return require(data, "data", "SIMBAD")
 
 
 @dataclass(frozen=True)
@@ -98,8 +98,10 @@ class VizierCone:
             "-source": self.catalog, "-c": f"{target.ra} {target.dec}",
             "-c.rs": f"{target.radius_arcsec:g}", "-out.max": "50",
         })
-        if "#++++" in text and "Error" in text:
-            raise RuntimeError(f"VizieR error for {self.catalog}")
+        error = next((ln for ln in text.splitlines() if ln.startswith("#INFO\tError=")), None)
+        if error or not text.lstrip().startswith("#") or "#Title" not in text:
+            raise RuntimeError(f"VizieR could not query {self.catalog}: "
+                               f"{error.split('=', 1)[1].strip() if error else 'unexpected response'}")
         header, rows = parse_vizier_tsv(text)
         matches = tuple(
             Match(" ".join(r[:2]).strip() or "row", "; ".join(
@@ -140,9 +142,11 @@ def angular_sep_deg(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
 
 def box_condition(ra: float, dec: float, radius_deg: float) -> str:
     """ADQL box enclosing a cone, for tables without a spatial index (handles RA wrap)."""
-    cos_dec = max(math.cos(math.radians(dec)), 1e-6)
-    half_ra = min(radius_deg / cos_dec, 180.0)
     dec_cond = f"dec between {dec - radius_deg} and {dec + radius_deg}"
+    if abs(dec) + radius_deg >= 90:
+        return dec_cond  # the cone contains a pole: every RA is in range
+    ratio = math.sin(math.radians(radius_deg)) / math.cos(math.radians(dec))
+    half_ra = math.degrees(math.asin(min(1.0, ratio)))
     lo, hi = ra - half_ra, ra + half_ra
     if lo < 0:
         ra_cond = f"(ra >= {lo + 360} or ra <= {hi})"
@@ -188,6 +192,7 @@ class ExofopTarget:
         matches = []
         for tic in tic_numbers(target.ids):
             data = http.get_json(f"{EXOFOP_TARGET}?id={tic}&json")
+            require(data, "basic_info", "ExoFOP")
             url = f"{EXOFOP_TARGET}?id={tic}"
             for toi in data.get("tois") or []:
                 matches.append(Match(str(toi.get("toi")), f"TFOPWG {toi.get('disp_tfop', '')}".strip(), url))

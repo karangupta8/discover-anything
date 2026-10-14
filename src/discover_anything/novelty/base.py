@@ -12,6 +12,7 @@ reports "none" for a query that didn't run.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -46,6 +47,8 @@ class Target:
             raise ValueError("give both lat and lon, or neither")
         if self.lat is not None and not (-90 <= self.lat <= 90 and -180 <= self.lon <= 180):
             raise ValueError("lat must be in [-90, 90] and lon in [-180, 180]")
+        if not (math.isfinite(self.radius_arcsec) and math.isfinite(self.radius_km)):
+            raise ValueError("search radius must be a finite number")
         if self.radius_arcsec <= 0 or self.radius_km <= 0:
             raise ValueError("search radius must be positive")
 
@@ -133,6 +136,18 @@ def run_connector(connector: Connector, target: Target, http: HttpClient) -> Nov
 def adql_string(value: str) -> str:
     """Quote a value for an ADQL string literal."""
     return "'" + value.replace("'", "''") + "'"
+
+
+def require(data: object, key: str, source: str) -> object:
+    """Fetch a required key from a JSON response; a missing key means the query failed."""
+    if not isinstance(data, dict) or key not in data:
+        raise RuntimeError(f"unexpected response from {source}: no '{key}' field")
+    return data[key]
+
+
+def phrase(term: str) -> str:
+    """A quoted search phrase with embedded quotes removed."""
+    return '"' + term.replace('"', " ").strip() + '"'
 
 
 def tic_numbers(ids: tuple[str, ...]) -> tuple[str, ...]:

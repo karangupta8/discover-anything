@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from ..http import HttpClient
@@ -64,15 +64,22 @@ def summary(rows: tuple[NoveltyRow, ...]) -> dict[str, int]:
     return {k: sum(r.status == k for r in rows) for k in keys}
 
 
+def catalogues_checked(rows: tuple[NoveltyRow, ...]) -> int:
+    """Non-literature sources that actually answered (found or none)."""
+    return sum(r.status in (FOUND, NONE) and r.domain != "literature" for r in rows)
+
+
 def _conclusion(rows: tuple[NoveltyRow, ...], day: str) -> str:
     counts = summary(rows)
     lines = []
     if counts[FOUND]:
         lines.append(f"Records found in {counts[FOUND]} source(s). Inspect each one below "
                      "before calling anything new; a record may be the same object or event.")
+    elif counts[NONE]:
+        lines.append(f"No records found as of {day} in the {counts[NONE]} source(s) that were checked.")
     else:
-        checked = counts[NONE]
-        lines.append(f"No records found as of {day} in the {checked} source(s) that were checked.")
+        lines.append("Nothing was checked: every source failed, was manual or didn't apply. "
+                     "This log is not evidence of novelty.")
     pending = [r.source for r in rows if r.status in (NOT_CHECKED, MANUAL)]
     if pending:
         lines.append("Not yet checked (do these by hand and add the result): "
@@ -112,15 +119,19 @@ def write_log(root: Path, claim: str, target: Target,
     if not _CLAIM_RE.match(claim):
         raise ValueError("claim id must use only letters, digits, '.', '_' or '-'")
     root = Path(root)
-    day = date.today().isoformat()
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%SZ")
     folder = root / "novelty"
     folder.mkdir(parents=True, exist_ok=True)
-    md_path = folder / f"{claim}_{day}.md"
+    md_path = folder / f"{claim}_{stamp}.md"
+    if md_path.exists():
+        raise FileExistsError(f"{md_path} already exists; wait a second and rerun")
     md_path.write_text(render_log(claim, target, rows), encoding="utf-8")
-    json_path = folder / f"{claim}_{day}.json"
+    json_path = folder / f"{claim}_{stamp}.json"
     json_path.write_text(json.dumps({"claim": claim, "target": asdict(target),
                                      "rows": [asdict(r) for r in rows]}, indent=2),
                          encoding="utf-8")
     entry = append(root, "novelty", path=md_path, tags=("novelty",),
-                   data={"claim": claim, "summary": summary(rows), "json": json_path.name})
+                   data={"claim": claim, "summary": summary(rows), "json": json_path.name,
+                         "catalogues_checked": catalogues_checked(rows),
+                         "pending": [r.source for r in rows if r.status in (NOT_CHECKED, MANUAL)]})
     return md_path, entry

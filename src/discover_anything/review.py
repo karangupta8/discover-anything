@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from .gates import claim_status
@@ -50,7 +50,8 @@ def make_pack(root: Path, reviewer: str, claim: str | None = None) -> ReviewPack
         raise ValueError("reviewer must be a short name like 'codex' or 'fresh-claude'")
     root = Path(root)
     today = date.today().isoformat()
-    folder = root / "reviews" / f"PACK_{reviewer}_{today}"
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%SZ")
+    folder = root / "reviews" / f"PACK_{reviewer}_{stamp}"
     folder.mkdir(parents=True, exist_ok=True)
 
     template = read_template("adversarial-review.md")

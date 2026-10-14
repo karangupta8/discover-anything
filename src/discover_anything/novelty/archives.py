@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 
 from ..http import HttpClient
-from .base import Match, Target
+from .base import Match, Target, require
 
 GVP_WFS = "https://webservices.volcano.si.edu/geoserver/GVP-VOTW/ows"
 EARTH_RADIUS_KM = 6371.0
@@ -44,8 +44,12 @@ class GvpEruptions:
                   "outputFormat": "application/json", "count": "5000",
                   "CQL_FILTER": " AND ".join(filters) or "INCLUDE"}
         data = http.get_json(GVP_WFS, params)
+        features = require(data, "features", "Smithsonian GVP")
+        total = data.get("numberMatched", data.get("totalFeatures"))
+        if isinstance(total, int) and total > len(features):
+            raise RuntimeError(f"GVP returned {len(features)} of {total} eruptions; narrow the years")
         matches = []
-        for feature in data.get("features", []):
+        for feature in features:
             props = feature["properties"]
             lon, lat = feature["geometry"]["coordinates"][:2]
             if target.lat is not None and haversine_km(target.lat, target.lon, lat, lon) > target.radius_km:

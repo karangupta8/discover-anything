@@ -40,7 +40,7 @@ path, size and SHA-256.
 | `waiver` | `discover waive` (human) | lets a check not apply, with a reason |
 | `attestation` | `discover attest` (human) | gates 8–9: expert review seen, follow-up done |
 
-Corrections are new entries; nothing is edited or deleted.
+Corrections are new entries; nothing is edited or deleted. Each line stores the SHA-256 of the previous line, so an edited or deleted line breaks the chain and shows up in `discover status`. Changed or missing evidence files block "All gates passed".
 
 ## Gates
 
@@ -51,10 +51,10 @@ Corrections are new entries; nothing is edited or deleted.
 | 0 Curiosity | KICKOFF question filled |
 | 1 Gap | gap, who else, how this differs filled |
 | 2 Scope | data, sample cuts, size, known answers, null test, kill and stop criteria filled |
-| 3 Calibrate | known-answer, null and injection evidence (or injection waived); settings frozen and unchanged |
-| 4 Search | search evidence; ≥ 2 funnel stages with null counts (or waived) |
+| 3 Calibrate | intact, non-empty known-answer, null and injection evidence (or injection waived); settings frozen and unchanged |
+| 4 Search | search evidence; ≥ 2 funnel stages with null counts; no funnel warnings (e.g. null ≥ half of real) unless waived |
 | 5 Kill | claim cards with real statuses; filled reviews each with a filled response |
-| 6 Novelty | a novelty log per live claim (all rejected = pass: stopping is a result) |
+| 6 Novelty | a ledger-recorded novelty log per live claim that checked ≥ 1 catalogue, with no unfinished sources unless waived (all rejected = pass: stopping is a result) |
 | 7 Preregister | intact frozen manifest, or waived with a reason |
 | 8 Report | human attestation: an expert has seen it |
 | 9 Follow-up | human attestation of the preregistered test's outcome |

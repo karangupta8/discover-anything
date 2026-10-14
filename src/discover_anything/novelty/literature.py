@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 from ..http import HttpClient
-from .base import Match, Target
+from .base import Match, Target, phrase, require
 
 ATOM = "{http://www.w3.org/2005/Atom}"
 
@@ -30,9 +30,12 @@ class Arxiv:
         matches = []
         for term in target.search_terms:
             xml = http.get_text("https://export.arxiv.org/api/query",
-                                {"search_query": f'all:"{term}"', "max_results": "25"})
+                                {"search_query": f"all:{phrase(term)}", "max_results": "25"})
             for entry in ET.fromstring(xml).findall(f"{ATOM}entry"):
                 title = " ".join((entry.findtext(f"{ATOM}title") or "").split())
+                if title.lower() == "error":
+                    raise RuntimeError("arXiv API returned an error entry: "
+                                       + " ".join((entry.findtext(f"{ATOM}summary") or "").split()))
                 matches.append(Match(title, f"term: {term}; {entry.findtext(f'{ATOM}published', '')[:10]}",
                                      entry.findtext(f"{ATOM}id")))
         return tuple(matches), "phrases: " + ", ".join(target.search_terms)
@@ -56,9 +59,9 @@ class Ads:
         matches = []
         for term in target.search_terms:
             data = http.get_json("https://api.adsabs.harvard.edu/v1/search/query",
-                                 {"q": f'full:"{term}"', "fl": "bibcode,title,year", "rows": "25"},
+                                 {"q": f"full:{phrase(term)}", "fl": "bibcode,title,year", "rows": "25"},
                                  headers={"Authorization": f"Bearer {token}"})
-            for doc in data.get("response", {}).get("docs", []):
+            for doc in require(require(data, "response", "ADS"), "docs", "ADS"):
                 title = (doc.get("title") or [""])[0]
                 matches.append(Match(title, f"term: {term}; {doc.get('year')} {doc.get('bibcode')}",
                                      f"https://ui.adsabs.harvard.edu/abs/{doc.get('bibcode')}"))
@@ -78,8 +81,8 @@ class Zenodo:
     def query(self, target: Target, http: HttpClient) -> tuple[tuple[Match, ...], str]:
         matches = []
         for term in target.search_terms:
-            data = http.get_json("https://zenodo.org/api/records", {"q": f'"{term}"', "size": "25"})
-            for hit in data.get("hits", {}).get("hits", []):
+            data = http.get_json("https://zenodo.org/api/records", {"q": phrase(term), "size": "25"})
+            for hit in require(require(data, "hits", "Zenodo"), "hits", "Zenodo"):
                 meta = hit.get("metadata", {})
                 matches.append(Match(meta.get("title", ""), f"term: {term}; "
                                      f"{meta.get('publication_date', '')}", hit.get("doi_url")))
@@ -103,8 +106,10 @@ class GithubRepos:
         matches = []
         for term in target.search_terms:
             data = http.get_json("https://api.github.com/search/repositories",
-                                 {"q": f'"{term}"', "per_page": "25"}, headers=headers)
-            for repo in data.get("items", []):
+                                 {"q": phrase(term), "per_page": "25"}, headers=headers)
+            if data.get("incomplete_results"):
+                raise RuntimeError("GitHub search timed out (incomplete_results); retry later")
+            for repo in require(data, "items", "GitHub"):
                 matches.append(Match(repo["full_name"], f"term: {term}; updated "
                                      f"{repo.get('pushed_at', '')[:10]}", repo.get("html_url")))
         return tuple(matches), "phrases: " + ", ".join(target.search_terms)

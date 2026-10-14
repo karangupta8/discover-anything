@@ -80,7 +80,7 @@ And the novelty check, run on the October 2026 planet candidate TIC 4206066:
 
 ```console
 $ discover novelty run --claim TIC-4206066 --id "TIC 4206066" --ra 80.859827 --dec -1.326974
-E-001  wrote novelty/TIC-4206066_2026-10-14.md
+E-001  wrote novelty/TIC-4206066_2026-10-14T143012Z.md
   found: 4, none: 9, not-checked: 1, manual: 0, n/a: 0
   [found] SIMBAD (identifier): 1 record(s)            ← listed as StKM 1-561
   [found] SIMBAD (cone): 1 record(s)

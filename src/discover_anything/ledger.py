@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +41,7 @@ class Entry:
     script: str | None = None
     git_commit: str | None = None
     data: dict[str, Any] = field(default_factory=dict)
+    prev: str | None = None  # SHA-256 of the previous ledger line: a hash chain
 
     def to_json(self) -> str:
         return json.dumps({**asdict(self), "tags": list(self.tags)}, ensure_ascii=False)
@@ -45,6 +50,35 @@ class Entry:
     def from_json(line: str) -> Entry:
         raw = json.loads(line)
         return Entry(**{**raw, "tags": tuple(raw.get("tags", ()))})
+
+
+LOCK_FILE = "ledger.lock"
+LOCK_TIMEOUT_S = 10.0
+
+
+def line_sha256(line: str) -> str:
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()
+
+
+@contextmanager
+def _locked(root: Path) -> Iterator[None]:
+    """Exclusive lock so concurrent appends can't take the same ID."""
+    lock = Path(root) / STATE_DIR / LOCK_FILE
+    deadline = time.monotonic() + LOCK_TIMEOUT_S
+    while True:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"ledger is locked ({lock}); delete it if no discover "
+                                   "command is running") from None
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        os.close(fd)
+        lock.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True)
@@ -107,7 +141,13 @@ def append(root: Path, kind: str, *, path: Path | None = None, tags: tuple[str, 
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind!r}; expected one of {sorted(KINDS)}")
     root = Path(root)
-    existing = read_entries(root)
+    with _locked(root):
+        return _append_locked(root, kind, path, tags, note, script, data)
+
+
+def _append_locked(root: Path, kind: str, path: Path | None, tags: tuple[str, ...], note: str,
+                   script: str | None, data: dict[str, Any] | None) -> Entry:
+    lines = [ln for ln in ledger_path(root).read_text(encoding="utf-8").splitlines() if ln.strip()]
     rel = sha = size = None
     if path is not None:
         full = Path(path) if Path(path).is_absolute() else root / path
@@ -115,13 +155,30 @@ def append(root: Path, kind: str, *, path: Path | None = None, tags: tuple[str, 
             raise FileNotFoundError(f"cannot record missing file: {full}")
         rel, sha, size = _relative(root, full), file_sha256(full), full.stat().st_size
     entry = Entry(
-        id=f"{ID_PREFIX}{len(existing) + 1:03d}", kind=kind, time=now_iso(), path=rel,
+        id=f"{ID_PREFIX}{len(lines) + 1:03d}", kind=kind, time=now_iso(), path=rel,
         sha256=sha, bytes=size, tags=tuple(t.strip().lower() for t in tags if t.strip()),
         note=note.strip(), script=script, git_commit=git_commit(root), data=dict(data or {}),
+        prev=line_sha256(lines[-1]) if lines else None,
     )
     with open(ledger_path(root), "a", encoding="utf-8") as handle:
         handle.write(entry.to_json() + "\n")
     return entry
+
+
+def chain_problems(root: Path) -> list[str]:
+    """Edited, deleted or reordered ledger lines break the hash chain or the ID sequence."""
+    lines = [ln for ln in ledger_path(root).read_text(encoding="utf-8").splitlines() if ln.strip()]
+    problems = []
+    for index, line in enumerate(lines):
+        entry = Entry.from_json(line)
+        expected_id = f"{ID_PREFIX}{index + 1:03d}"
+        if entry.id != expected_id:
+            problems.append(f"ledger line {index + 1}: id {entry.id}, expected {expected_id}")
+        expected_prev = line_sha256(lines[index - 1]) if index else None
+        if index and entry.prev is not None and entry.prev != expected_prev:
+            problems.append(f"ledger line {index + 1} ({entry.id}): hash chain broken; "
+                            "an earlier line was edited or removed")
+    return problems
 
 
 def find(entries: tuple[Entry, ...], entry_id: str) -> Entry | None:

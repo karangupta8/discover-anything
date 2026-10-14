@@ -32,7 +32,7 @@ class FakeZenodo:
 
     def post_json(self, url, payload, headers=None):
         self.calls.append(("POST", url, payload))
-        return {"id": 42, "links": {"bucket": "https://zenodo.test/b/1", "html": "https://zenodo.test/d/42"},
+        return {"id": 42, "links": {"bucket": "https://zenodo.org/api/files/1", "html": "https://zenodo.test/d/42"},
                 "metadata": {"prereserve_doi": {"doi": "10.5281/zenodo.42"}}}
 
     def put_bytes(self, url, body, headers=None):
