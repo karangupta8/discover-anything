@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Data stays out of the repo; record pointers in run logs instead
+data/
+*.fits
+
+# Third-party texts kept for local reference only (copyrighted, not ours to publish)
+/references/
+
+# Secrets
+.env
+keys.yml
+
+# Private notes (launch plans, personal hunts)
+/local/
