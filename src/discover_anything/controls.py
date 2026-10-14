@@ -169,3 +169,24 @@ def holdout_prediction(time: ArrayLike, flux: ArrayLike, hidden_mask: ArrayLike,
         "depth_sigma": float(depth_sigma),
         "detected": bool(depth_sigma > DETECTION_SIGMA),
     }
+
+
+def shuffle_flux(flux: ArrayLike, seed: int = 0) -> NDArray[np.float64]:
+    """Null test for periodicity searches: permute flux values in time.
+
+    Destroys any periodic signal while keeping the flux distribution. White
+    noise only: it also destroys correlated (red) noise, so prefer
+    block_shuffle when the light curve has trends.
+    """
+    rng = np.random.default_rng(seed)
+    return rng.permutation(np.asarray(flux, dtype=float))
+
+
+def block_shuffle(flux: ArrayLike, block: int, seed: int = 0) -> NDArray[np.float64]:
+    """Permute contiguous blocks of flux, keeping noise correlated within each block."""
+    flux = np.asarray(flux, dtype=float)
+    if block < 1:
+        raise ValueError("block must be >= 1")
+    blocks = [flux[i:i + block] for i in range(0, flux.size, block)]
+    order = np.random.default_rng(seed).permutation(len(blocks))
+    return np.concatenate([blocks[i] for i in order])

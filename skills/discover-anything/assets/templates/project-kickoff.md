@@ -1,29 +1,30 @@
-# Project Kickoff: <name>
+# Kickoff: <name>
 
-Fill in before writing any code. Commit it; it is the baseline you are held to.
+Fill in before writing any search code. Commit it; it is the baseline the hunt
+is held to. `discover status` reads the fields below.
 
 - **Date:**
 - **Question in one sentence:**
 - **The gap (why professionals haven't done this):**
-- **Who else is working on it (searched arXiv / GitHub / Zenodo / X on <date>):**
-- **How my angle differs:**
+- **Who else is working on it (searched papers / GitHub / Zenodo / social on <date>):**
+- **How this angle differs:**
 
 ## Data
-- Mission / instrument / products:
-- Sample cuts (exact, reproducible):
-- Expected size (stars, light curves, GB):
-- Compute plan (laptop / cloud), estimated hours:
+- **Source and products:**
+- **Sample cuts (exact, reproducible):**
+- **Expected size:**
+- **Compute plan and estimated hours:**
 
 ## Known answers for calibration
-- Objects the pipeline must recover blind:
-- Injection grid (depths / periods / SNRs):
-- Null test (inverted / shuffled / control stars):
+- **Known answers the pipeline must recover blind:**
+- **Injection grid (or why injection doesn't apply):**
+- **Null test:**
 
 ## Success and failure criteria
-- What counts as a candidate:
-- What kills a candidate:
-- What result would make me stop the project:
+- **What counts as a candidate:**
+- **What kills a candidate:**
+- **What result stops the project:**
 
 ## Output
-- Where results will be published:
-- Who I will ask for human review:
+- **Where results will be published:**
+- **Who will be asked for human review:**

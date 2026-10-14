@@ -53,6 +53,32 @@ would kill it before you look.
 `discover new <hunt>` creates this layout. Without the CLI, copy the templates in
 [assets/templates/](assets/templates/) and create the folders by hand.
 
+## Tools
+
+If the `discover` CLI or the `discover-anything` MCP server is available, use it:
+it turns the rules below into checks. Install with
+`pip install "discover-anything[mcp]"`, then `discover setup --yes`. Run
+`discover status` at the start of every session and after every phase; it
+names the next action.
+
+| When | Command (MCP tool) |
+|---|---|
+| Start | `discover new <hunt> --domain astronomy` (`new_hunt`) |
+| Every session | `discover status` (`hunt_status`) |
+| A script wrote a result | `discover record <file> --tag search` (`record_evidence`): cite the returned `[E-012]` |
+| Calibration done | `discover record ... --tag known-answer / null / injection`, then `discover freeze settings.yml --note ...` (`freeze_settings`) |
+| Known answers scored | `discover score-known --known k.csv --found f.csv --key id --value period --out controls/known.json` |
+| Each funnel stage | `discover funnel add <stage> --real N --null M` (`funnel_add`) |
+| Before review | `discover review pack --reviewer codex` (`review_pack`) |
+| Novelty | `discover novelty run --claim <id> --id "TIC 123" --ra .. --dec ..` (`novelty_check`) |
+| Predictions | `discover prereg freeze prereg/predictions.csv` (`prereg_freeze`) |
+| Any write-up | `discover check-claims WRITEUP.md` (`check_claims`): every number must cite evidence |
+| Archives | `discover dedupe passages.jsonl` (reprints), `discover judge-agreement` (judge calibration) |
+
+**Never run `discover waive` or `discover attest` yourself.** Waivers and
+attestations (expert review seen, follow-up done) are the human's decisions.
+Prepare them, explain why, and ask the human to run the command.
+
 ## The loop
 
 Nine phases, each closed by a gate. Do not pass a gate you cannot answer "yes"

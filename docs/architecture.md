@@ -1,94 +1,90 @@
 # Architecture
 
-Discover Anything has two layers, skills and tools. Each covers what the other can't.
+Two layers. Skills hold the method; tools hold the checks.
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│  Skill: SKILL.md + references (method, gates, evidence rules) │  tells the agent when and why
-├───────────────────────────────────────────────────────────────┤
-│  Tools: Python package → CLI + MCP server                     │  makes the rules checkable
-└───────────────────────────────────────────────────────────────┘
-          used by any coding agent: Claude Code, Codex, Cursor, Gemini CLI …
+┌──────────────────────────────────────────────────────────────────┐
+│  Skills: discover-anything · find-a-gap · vet-a-claim ·          │  tell the agent what to do,
+│          novelty-check · preregister  (+ domain packs)           │  when, and why
+├──────────────────────────────────────────────────────────────────┤
+│  Tools: Python package → `discover` CLI + MCP server             │  make the rules checkable
+│         ledger · gates · claims · funnel · novelty · prereg ·    │
+│         review · controls · vetting · calibration · textmatch    │
+└──────────────────────────────────────────────────────────────────┘
+        used by any coding agent: Claude Code, Codex, Cursor, Gemini CLI …
 ```
 
-## Why a skill *and* tools
+## Why both
 
-| | Instructions only (AGENTS.md / skill) | Tools only | Both |
+| | Instructions only | Tools only | Both |
 |---|---|---|---|
-| Agent knows the discipline | Yes | No: it gets functions, not judgement | Yes |
-| Rules are enforced | No: "numbers come from files" is a request | Partly | Yes: the ledger and gate checker verify it |
-| Works with zero install | Yes | No | Yes: the skill works alone, tools add rigour |
-| Reproducible controls | Each hunt re-implements them | Yes | Yes |
-| Easy to copy | Very | Moderately | Hardest: method and tools improve together |
+| Agent knows the discipline | Yes | No: functions, not judgement | Yes |
+| Rules are enforced | No: "numbers come from files" is a request | Partly | Yes: ledger, gates, claim checker |
+| Works with zero install | Yes | No | Yes: skills work alone, tools add checks |
+| Reproducible controls | Re-implemented per hunt | Yes | Yes |
 
-Instructions alone can't check anything. An agent can say it ran a null test.
-Tools alone don't teach the agent why the null test matters, or when to stop.
-The skills hold the method; the tools hold the checks.
+## The ledger
 
-## Layer 1: the skill
+`.discover/ledger.jsonl` in each hunt is append-only. Every entry has an ID
+(`E-001`…), a kind, a UTC time, the git commit, and for file-backed entries the
+path, size and SHA-256.
 
-`skills/discover-anything/` follows the open Agent Skills format: a `SKILL.md`
-the agent loads on demand, plus references it reads only when a phase needs
-them. Domain packs (`references/domains/*.md`) carry what changes between fields:
-data sources, traps, impostor classes, novelty sources, official channels. The
-core loop and evidence rules don't change.
-
-A new domain starts as one hunt's `LESSONS.md` and becomes a pack once a hunt
-in that domain has run end to end.
-
-## Layer 2: the tools
-
-A Python package (`discover-anything`), because the scientific ecosystem
-(astropy, lightkurve, astroquery, numpy) lives there. It exposes the same
-operations as a CLI (`discover …`) and as an MCP server, so any agent can call
-them and a human can run them by hand.
-
-### Available now
-
-| Module | Operation | Control |
+| Kind | Written by | Used by |
 |---|---|---|
-| `controls` | `invert_flux` | Null test: dips become bumps |
-| `controls` | `inject_box_transit`, `injection_recovery` | Plant synthetic signals; measure recall at a strength |
-| `controls` | `holdout_prediction` | Fit on visible data; predict and measure the hidden part |
-| `controls` | `bls_search`, `period_grid` | Minimal search used by the controls, with a grid-size guard |
+| `evidence` | `discover record` (tags: known-answer, null, injection, search, …) | gates 3–4, `check-claims` |
+| `frozen` | `discover freeze` | gate 3: changes after freezing fail until re-frozen and a new null test is recorded |
+| `funnel` | `discover funnel add` | gate 4, funnel table and warnings |
+| `novelty` | `discover novelty run` | gate 6 |
+| `prereg` | `discover prereg freeze` | gate 7: any frozen file changed fails |
+| `review` | `discover review pack` | audit trail |
+| `waiver` | `discover waive` (human) | lets a check not apply, with a reason |
+| `attestation` | `discover attest` (human) | gates 8–9: expert review seen, follow-up done |
 
-### Planned
+Corrections are new entries; nothing is edited or deleted.
 
-| Operation | What it does | Why it matters |
-|---|---|---|
-| `discover new <hunt>` | Scaffold a hunt folder from `templates/` | Every hunt starts with the gates in place |
-| `discover status` | Read the hunt folder; report which gates pass and what is missing | Turns the workflow into a checklist the agent can't skip |
-| Evidence ledger: `record`, `cite` | Each result file registered with hash, script, commit, time → evidence ID | Makes "numbers come from files" checkable |
-| `discover check-claims <file>` | Flag numbers in a write-up with no evidence ID | Catches stated-but-not-computed numbers before review |
-| `funnel` | Record stage counts for real and null runs; render the side-by-side table | The table every credible write-up needs |
-| `known_answer_recovery` | Score recall on a list of known answers for any pipeline output | Domain-neutral "buried wristwatch" |
-| `shuffle_time` | Time-shuffled null for periodicity searches | Null test for Lomb–Scargle style searches |
-| Novelty connectors | SIMBAD, VSX, ExoFOP, NASA Exoplanet Archive, Gaia, ADS, arXiv, Zenodo, GitHub; Meteoritical Bulletin, Smithsonian GVP | One call → a dated novelty-log row per source |
-| `prereg freeze` | Hash predictions and code, record commit, prepare a Zenodo draft | Preregistration in one step; the human publishes |
-| `review pack` | Bundle the hunt folder and the adversarial prompt for a second model | Fresh-context review without the conversation |
-| `judge calibrate` (archives) | Run a judge prompt on its labelled set; report agreement | Detects drift when a prompt or model changes |
-| `setup` | Register the MCP server and install the skill into supported agents | One-command start |
+## Gates
 
-### Tool design rules
+`discover status` evaluates the nine gates from files and the ledger:
 
-- Every operation returns data plus the evidence behind it: inputs, file
-  hashes, versions, and stated limitations.
-- No operation hides a negative result. Controls report failures as prominently
-  as successes.
+| Gate | Passes when |
+|---|---|
+| 0 Curiosity | KICKOFF question filled |
+| 1 Gap | gap, who else, how this differs filled |
+| 2 Scope | data, sample cuts, size, known answers, null test, kill and stop criteria filled |
+| 3 Calibrate | known-answer, null and injection evidence (or injection waived); settings frozen and unchanged |
+| 4 Search | search evidence; ≥ 2 funnel stages with null counts (or waived) |
+| 5 Kill | claim cards with real statuses; filled reviews each with a filled response |
+| 6 Novelty | a novelty log per live claim (all rejected = pass: stopping is a result) |
+| 7 Preregister | intact frozen manifest, or waived with a reason |
+| 8 Report | human attestation: an expert has seen it |
+| 9 Follow-up | human attestation of the preregistered test's outcome |
+
+## Novelty connectors
+
+Each connector returns `found`, `none`, `not-checked` (with the error) or
+`manual`. It never reports "none" for a query that didn't run, and never
+decides novelty: a star appearing in SIMBAD is expected; a TOI on it is not.
+The person reads every `found` row.
+
+New connectors implement `applies(target)` and `query(target, http)` (see
+`src/discover_anything/novelty/base.py`) and are tested with a fake HTTP
+client.
+
+## Design rules
+
+- Every operation returns data plus its evidence: inputs, hashes, versions,
+  limitations.
+- No operation hides a negative result.
 - Operations never modify their inputs; they write new files.
-- Anything that leaves the machine (submissions, posts, emails) is prepared by
-  tools and sent only by the human.
+- Anything that leaves the machine or represents a human judgement is CLI-only
+  and done by the human.
 
 ## Relation to other projects
 
 - **[REA](https://github.com/morluto/rea)** showed that an MCP server plus a
-  bundled agent skill is the right shape for agent tooling. Discover Anything
-  applies that shape to citizen science.
+  bundled agent skill is the right shape for agent tooling.
 - **[Antiquity](https://github.com/jessewaites/antiquity)** scaffolds workspaces
-  for historical investigations. The archives domain pack builds on its method.
-  Use it directly for archive work if you prefer a dedicated workspace.
+  for historical investigations; the archives domain pack builds on its method.
 - **[Scientific Agent Skills](https://github.com/K-Dense-AI/scientific-agent-skills)**
-  gives agents broad scientific tooling (databases, analysis libraries) for
-  professional research. Discover Anything is narrower and complementary: the
-  discipline for turning public data into a claim experts can trust. The two
-  can be installed together.
+  gives agents broad scientific tooling. Discover Anything is narrower and
+  complementary: the gates between a result and a discovery claim.

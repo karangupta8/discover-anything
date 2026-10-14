@@ -4,9 +4,9 @@
 
 ### Point your coding agent at public data. Find what everyone missed. Then try hard to prove yourself wrong.
 
-**An agent skill + toolkit for citizen science that experts can trust.**
+**Agent skills + a CLI + an MCP server that turn "AI found something" into a claim experts can check.**
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [Domains](#what-you-can-hunt) · [FAQ](#faq)
+[Quick start](#quick-start) · [What the tools enforce](#what-the-tools-enforce) · [Skills](#skills) · [Domains](#what-you-can-hunt) · [FAQ](#faq)
 
 </div>
 
@@ -14,96 +14,113 @@
 
 In one week in October 2026, people with coding agents and no institutional
 affiliation found transiting-planet candidates in NASA TESS data, a meteorite
-fall that no catalogue records in an 1812 newspaper, and three Javan rhinoceroses
-missing from the historical record in Dutch East India Company letters. The data
-had been public for years. The rhinos have since been confirmed by the specialist
-who maintains their record.
+fall that no catalogue records in an 1812 newspaper, and three Javan
+rhinoceroses missing from the historical record in Dutch East India Company
+letters. The data had been public for years.
 
-None of this needed a supercomputer. What it did need was discipline. The
-credible hunters, working independently, converged on the same practices:
+Finding a candidate is now cheap. The first question every expert asked was
+the same: **"How are you ruling out known objects, noise and impostors?"** The
+credible hunters answered with the same practices, worked out independently:
+recover known answers first, measure the false-alarm rate, check the primary
+record, search every catalogue, preregister, and let a fresh mind attack the
+result.
 
-- recover known answers before trusting a search
-- measure the false-alarm rate on data where the answer is "nothing"
-- go back to the primary record: the pixels, the page scan
-- check every catalogue the specialists use before saying "new"
-- preregister predictions before the telescope looks again
-- let a fresh mind attack the result, then ask a human expert
-
-Discover Anything packages that discipline so any coding agent follows it,
-whatever your field.
+Discover Anything packages that discipline so any coding agent follows it, and
+**checks** that it did, instead of taking the agent's word for it.
 
 ## Quick start
 
-### 1. Give your agent the skill
+```bash
+pip install "discover-anything[mcp] @ git+https://github.com/karangupta8/discover-anything"
+discover setup --yes          # installs the skills and registers the MCP server (Claude Code)
+```
 
-The skill uses the open [Agent Skills](https://agentskills.io) format and works
-with Claude Code, Codex, Cursor, Gemini CLI and other agents that load skills.
+Skills only, for any agent that supports the open [Agent Skills](https://agentskills.io) format:
 
 ```bash
 npx skills add karangupta8/discover-anything
 ```
 
-Or copy [`skills/discover-anything/`](skills/discover-anything/) into your
-agent's skills folder (for Claude Code: `~/.claude/skills/`).
-
-### 2. Ask your agent
-
-```text
-Use discover-anything. I'd like to find new variable stars in recent TESS sectors.
-Start a hunt folder and walk me through it.
-```
-
-```text
-Use discover-anything to check this claimed find before I post it: <link or folder>.
-```
+Then ask your agent:
 
 ```text
 Use find-a-gap. I have a laptop and a weekend. Suggest three gaps in public data I could work on.
 ```
 
-The agent creates a hunt folder, proposes a gap and the known answers to
-calibrate on, and works through the gates with you. You make the calls that
-matter: scope, thresholds, what counts as a kill, and anything that leaves
-your machine.
-
-### 3. Use the controls directly (optional)
-
-```bash
-pip install -e ".[dev]"
-pytest
+```text
+Use discover-anything to start a hunt for new variable stars in recent TESS sectors.
 ```
 
-```python
-from discover_anything.controls import invert_flux, injection_recovery, holdout_prediction
-
-null_flux = invert_flux(flux)                      # every "dip" is now a false alarm
-recall = injection_recovery(time, flux, depth=300e-6, n_trials=50,
-                            period_range=(1, 10), duration=0.08, seed=42)
+```text
+Use vet-a-claim on this before I post it: <link or folder>
 ```
 
-## How it works
+## What the tools enforce
 
+Every hunt gets a folder and an append-only **evidence ledger**. The agent works;
+the tools keep score.
+
+```console
+$ discover new tess-variables --domain astronomy
+$ discover status
+[    PASS] 0 Curiosity
+[    PASS] 1 Gap
+[    PASS] 2 Scope
+[    FAIL] 3 Calibrate
+             no 'null' evidence: run the pipeline on inverted or shuffled data, then `discover record <file> --tag null`
+             no 'injection' evidence: plant synthetic signals and record the recovery with `--tag injection` (or the human waives it with a reason)
+             frozen settings settings.yml changed since freezing; re-freeze with a reason and re-run the null test
+             1 evidence entries tagged 'known-answer'
+[    FAIL] 4 Search
+...
+Next: no 'null' evidence: run the pipeline on inverted or shuffled data, then `discover record <file> --tag null`
 ```
-0 Curiosity → 1 Gap → 2 Scope → 3 Calibrate → 4 Search → 5 Kill → 6 Novelty
-  → 7 Preregister → 8 Report → 9 Follow-up
+
+And the novelty check, run on the October 2026 planet candidate TIC 4206066:
+
+```console
+$ discover novelty run --claim TIC-4206066 --id "TIC 4206066" --ra 80.859827 --dec -1.326974
+E-001  wrote novelty/TIC-4206066_2026-10-14.md
+  found: 4, none: 9, not-checked: 1, manual: 0, n/a: 0
+  [found] SIMBAD (identifier): 1 record(s)            ← listed as StKM 1-561
+  [found] SIMBAD (cone): 1 record(s)
+  [not-checked] NASA ADS: ADS_API_TOKEN is not set
+  [found] Zenodo (preprints, data, predictions): 5 record(s)
+  [found] GitHub repositories (hobbyist postings): 1 record(s)   ← someone else's verification repo
 ```
 
-Each phase ends in a gate the agent must pass before moving on: *Did the
-pipeline recover known answers blind? Is the funnel recorded for both the real
-and the null run? Is there a dated novelty log?* The full loop is in
-[`workflow.md`](skills/discover-anything/references/workflow.md).
+| Rule | How it's checked |
+|---|---|
+| **Numbers come from files** | `discover record` hashes each result file and returns an ID; `discover check-claims WRITEUP.md` flags every number with no `[E-012]` citation, and every citation whose file changed |
+| **Calibrate before searching** | Gate 3 needs evidence tagged `known-answer`, `null` and `injection` (or a human waiver with a reason) |
+| **No moving the goalposts** | `discover freeze settings.yml`; editing it later fails the gate until it is re-frozen *and* a new null test is recorded |
+| **Show the funnel** | `discover funnel add` records real vs null counts per stage, and warns when the null run yields as much as the real run |
+| **Is it new?** | `discover novelty run` queries 15 sources and writes a dated log. A source that can't be reached is reported as *not checked*, never as "no match" |
+| **Fresh-eyes review** | `discover review pack --reviewer codex` builds a prompt and file list for a second model; empty review stubs don't pass the gate |
+| **Preregister** | `discover prereg freeze` checksums predictions; a changed file fails the gate. `discover prereg zenodo` creates a draft with a reserved DOI and never publishes it for you |
+| **Humans make the human calls** | Waivers and attestations ("an expert has seen it") are CLI-only and are not exposed to agents over MCP |
 
-Every result follows the evidence rules: numbers come from files a script
-wrote, never from chat; every statement is labelled as an observation, an
-inference or an unknown; controls run on exactly the same code as the search;
-thresholds freeze before any candidate is seen.
+### Novelty sources
 
-The project has three layers ([architecture](docs/architecture.md)):
-
-| Layer | What it is | Where |
+| Astronomy | Literature and hobbyists | Historical |
 |---|---|---|
-| **Skill** | The method: phases, gates, evidence rules, vetting, domain packs | [`skills/discover-anything/`](skills/discover-anything/) |
-| **Tools** | Tested controls now; CLI and MCP server for scaffolding, evidence ledger, novelty checks and preregistration on the [roadmap](docs/architecture.md#planned) | [`src/discover_anything/`](src/discover_anything/) |
+| SIMBAD (identifier and cone) · AAVSO VSX · TESS eclipsing binaries (Prša+ 2022) · Gaia DR3 variability · Gaia DR3 non-single stars · APOGEE binaries · NASA Exoplanet Archive (planets, TOIs) · ExoFOP-TESS | arXiv · NASA ADS (token) · Zenodo · GitHub | Smithsonian Global Volcanism Program · Meteoritical Bulletin (manual) · any source you add with `--manual` |
+
+### Also included
+
+- **Controls:** inverted and time-shuffled nulls, block shuffle for red noise, box-transit injection-recovery, hold-out prediction, known-answer scoring with period aliases
+- **Vetting:** odd/even depths, secondary eclipse, per-season depth consistency, single-event dominance, known systematic periods, Lomb-Scargle with false-alarm probability
+- **Archives:** reprint grouping (so one story printed in ten papers counts once), judge-model agreement (accuracy, kappa, confusions) before a cheap model filters a corpus
+
+## Skills
+
+| Skill | Use it to |
+|---|---|
+| [`discover-anything`](skills/discover-anything/SKILL.md) | Run a hunt end to end: nine phases with gates, evidence rules, domain packs |
+| [`find-a-gap`](skills/find-a-gap/SKILL.md) | Choose what to look for: gaps sized for one person, with known answers to calibrate on |
+| [`vet-a-claim`](skills/vet-a-claim/SKILL.md) | Stress-test your own or someone else's find before it is posted or believed |
+| [`novelty-check`](skills/novelty-check/SKILL.md) | Answer "has anyone found this already?" systematically, with a dated log |
+| [`preregister`](skills/preregister/SKILL.md) | Make a candidate falsifiable before the telescope looks again |
 
 ## What you can hunt
 
@@ -111,13 +128,16 @@ The project has three layers ([architecture](docs/architecture.md)):
 |---|---|---|
 | **Astronomy** | Planet candidates, variable stars, eclipsing binaries, asteroid rotation periods | [astronomy.md](skills/discover-anything/references/domains/astronomy.md) |
 | **Historical archives** | Meteorite falls, volcanic eruptions, animal records, lost ships in digitised letters, newspapers and logbooks | [archives.md](skills/discover-anything/references/domains/archives.md) |
-| **Your field** | Anything with public data, known answers to calibrate on, and a specialist who can confirm | Start with the core loop; your `LESSONS.md` becomes the next pack |
+| **Your field** | Anything with public data, known answers to calibrate on, and a specialist who can confirm | Core loop; your `LESSONS.md` becomes the next pack |
 
-## Where the method came from
+## How it fits with other tools
 
-The rules come from public work in October 2026: three independent TESS planet
-hunts ([origins](docs/origins/tess-planet-hunts.md)) and two investigations of
-the Dutch East India Company archive ([origins](docs/origins/archive-finds.md)).
+[Scientific Agent Skills](https://github.com/K-Dense-AI/scientific-agent-skills)
+gives agents broad scientific capability: libraries, databases, analysis and
+writing, mostly for professional life-science work. Discover Anything is
+narrower: the discipline for turning public data into a **discovery claim**,
+with checks the agent can't skip. Use both: their skills for the analysis,
+these gates for the claim.
 
 ## FAQ
 
@@ -125,69 +145,62 @@ the Dutch East India Company archive ([origins](docs/origins/archive-finds.md)).
 <summary><strong>Do I need to be a scientist?</strong></summary>
 
 No. You need curiosity and the willingness to believe a control over your own
-excitement. The skill walks you through each step and tells you which decisions
-are yours. The `find-a-gap` skill suggests starting points sized for one person.
+excitement. `discover status` always tells you the next step, and the skills
+say which decisions are yours.
 
 </details>
 
 <details>
 <summary><strong>Isn't this going to flood experts with junk?</strong></summary>
 
-That is the problem it is designed to prevent. Nothing reaches an official
-channel until it has passed known-answer recovery, a measured false-alarm rate,
-a primary-record check, a dated novelty search, adversarial review, and a human
-expert's eye. Most candidates die along the way, and the rejections are
-published too.
+It is designed to do the opposite. Nothing reaches an official channel until it
+has passed known-answer recovery, a measured false-alarm rate, a primary-record
+check, a dated novelty search, adversarial review and a human expert's eye. Most
+candidates die on the way, and the rejections are kept.
 
 </details>
 
 <details>
 <summary><strong>Can I say "AI discovered" it?</strong></summary>
 
-No. Say what happened: "found with an AI coding agent, reviewed by a second
-model and a fresh session". Say "candidate" until an expert or catalogue
-accepts it. The [language table](skills/discover-anything/SKILL.md#language)
-has the exact wording.
+No. Say "found with an AI coding agent, reviewed by a second model and a fresh
+session". Say "candidate" until an expert or catalogue accepts it.
+
+</details>
+
+<details>
+<summary><strong>Can't the agent just fake the checks?</strong></summary>
+
+It can write a file called `null.json`. It can't make that file match a hash
+recorded before the threshold changed, pass `check-claims` with uncited
+numbers, or attest that an expert reviewed it. The tools make shortcuts
+visible; the human still reads every plot.
 
 </details>
 
 <details>
 <summary><strong>What does it cost?</strong></summary>
 
-A 526-star planet search ran in one morning on a $100/month agent plan. A home
-GPU embedded 5.7 million archive passages overnight, and a small model read
-59,000 of them for about $3. Start laptop-sized; scale only after the pipeline
-is proven.
+The tools are free and run locally. In 2026, a 526-star planet search ran in one
+morning on a $100/month agent plan, and a small model read 59,000 archive
+passages for about $3.
 
 </details>
 
-<details>
-<summary><strong>Which agents work with it?</strong></summary>
+## Where the method came from
 
-Any agent that loads Agent Skills (Claude Code, Codex, Cursor, Gemini CLI and
-others). Without skill support, point the agent at `skills/discover-anything/SKILL.md`
-and ask it to follow it.
-
-</details>
+Public work from October 2026: three independent TESS planet hunts
+([origins](docs/origins/tess-planet-hunts.md)) and two investigations of the
+Dutch East India Company archive ([origins](docs/origins/archive-finds.md)).
+Credit to Pavel Rabtsevich, Eumemic and Paras Chopra (TESS), and Benjamin Breen
+and Jesse Waites (archives; see Waites's [Antiquity](https://github.com/jessewaites/antiquity)).
+The skills-plus-tools shape follows [REA](https://github.com/morluto/rea).
+Sources: [docs/sources.md](docs/sources.md).
 
 ## Contributing
 
-Contributions that make finding faster or more rigorous:
-
-- **Novelty connectors** for catalogues in your field
-- **Controls and vetting tests** for a data type
-- **A domain pack** for a field you know: its traps, impostors, catalogues and
-  channels
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Credits
-
-Built on the public work of Pavel Rabtsevich, Eumemic and Paras Chopra (TESS),
-and Benjamin Breen and Jesse Waites (historical archives). The archives method
-draws on Waites's [Antiquity](https://github.com/jessewaites/antiquity). The
-skill-plus-tools shape follows [REA](https://github.com/morluto/rea). Full
-sources are in [docs/sources.md](docs/sources.md).
+Most wanted: novelty connectors for catalogues in your field, controls and
+vetting tests for a data type, and domain packs. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
